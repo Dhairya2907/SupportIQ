@@ -1,13 +1,3 @@
----
-title: SupportIQ API
-emoji: 🎫
-colorFrom: indigo
-colorTo: blue
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # SupportIQ: AI Customer Support Ticket Triage
 
 Hybrid AI system that triages incoming customer support tickets. A small trained model handles
@@ -20,7 +10,7 @@ customer message
    ├─► TF-IDF + Logistic Regression ──► category (+ confidence) ──► team routing
    ├─► rules (keywords, repeat contact, wait time, sentiment) ──► priority (+ reasons)
    ├─► Gemini ──► summary + sentiment
-   └─► Chroma retrieval over policy docs ──► Gemini ──► draft reply with [sources] + groundedness score
+   └─► Gemini embeddings + cosine search over policy docs ──► Gemini ──► draft reply with [sources] + groundedness score
                                                             │
                                                agent reviews / corrects / approves
                                                             │
@@ -35,7 +25,7 @@ customer message
 | DB | SQLite now, PostgreSQL later | zero setup; same models migrate in an afternoon |
 | Classifier | scikit-learn TF-IDF + LogReg | fast, cheap, reproducible, explainable |
 | LLM | Gemini 3.5 Flash-Lite (free tier) | summary, sentiment, response drafts |
-| RAG | Chroma + paraphrase-multilingual-MiniLM-L12-v2 | local embeddings, English + Hindi, no API cost |
+| RAG | Gemini embeddings + NumPy cosine search in the main DB | multilingual, no PyTorch, no vector DB service, fits 512 MB hosts |
 | Dashboard | Streamlit | agent queue, review, metrics |
 
 ## Setup
@@ -43,7 +33,7 @@ customer message
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 copy .env.example .env        # then paste your Gemini key from https://aistudio.google.com/apikey
 ```
 
@@ -74,17 +64,15 @@ app before training.
 ## Run
 
 ```powershell
-python -m app.services.rag                 # one-time: index data/knowledge_base/*.md into Chroma
 uvicorn app.main:app --reload --port 8010  # API at http://127.0.0.1:8010, docs at /docs
 $env:SUPPORTIQ_API="http://127.0.0.1:8010"  # tell the dashboard where the API is
 streamlit run dashboard/app.py --server.port 8501   # agent dashboard (internal)
 streamlit run portal/app.py --server.port 8502      # customer Help Center (public)
 ```
 
-The API answers `/health` immediately but spends 30 to 50 seconds in the background loading
-PyTorch and the embedding model on first start (slower from a OneDrive folder). Tickets created
-before that finishes still work; they just wait for the warm-up. After that, a ticket takes
-roughly 10 to 15 seconds end to end, almost all of it in the two Gemini calls, which run in parallel.
+On first start the API embeds the knowledge base (one Gemini call) and backfills ticket
+embeddings in the background. A ticket takes roughly 5 to 15 seconds end to end: one Gemini
+embedding call plus one Gemini triage call.
 
 Hindi or Hinglish tickets: submit them through the dashboard or a Python client. `curl` from
 Git Bash or cmd on Windows mangles Devanagari into question marks before it reaches the API.
@@ -112,7 +100,7 @@ it appear, triaged, in the queue on the right.
 
 ## Stage 3 features
 
-**Similar-ticket detection.** Every ticket is embedded into a second Chroma collection when it is
+**Similar-ticket detection.** Every ticket's embedding is stored in the `embeddings` table when it is
 triaged. `GET /tickets/{id}/similar` returns the closest earlier tickets with their status and the
 agent's final response, so the detail page can show "5 similar, 2 already resolved" and how.
 Older tickets are indexed automatically at startup.
@@ -154,21 +142,22 @@ one ticket at a time, and tickets fill in as they finish. `GET /tickets/metrics`
 
 ## Deployment
 
-Three free services, one repository:
+Three free services, one repository. Total cost: zero.
 
-| Piece | Host | Config |
+| Piece | Host | How |
 |---|---|---|
-| API (`Dockerfile`) | Hugging Face Space, Docker SDK | Secrets: `GEMINI_API_KEY`, `DATABASE_URL`. Port 7860. The YAML block at the top of this README is the Space config. |
-| PostgreSQL | Neon (or Supabase) | Copy the connection string into `DATABASE_URL`. `postgres://` URLs are normalised automatically. |
-| Agent dashboard | Streamlit Community Cloud, main file `dashboard/app.py` | Secrets: `SUPPORTIQ_API = "https://<space>.hf.space"`, `DASHBOARD_PASSWORD = "..."` |
-| Customer portal | Streamlit Community Cloud, main file `portal/app.py` | Secrets: `SUPPORTIQ_API = "https://<space>.hf.space"` |
+| API | Render, free web service | New -> Blueprint -> this repo (`render.yaml`). Set `GEMINI_API_KEY` and `DATABASE_URL` when prompted. |
+| PostgreSQL | Neon | Create a project, copy the connection string into `DATABASE_URL`. `postgres://` URLs are normalised. |
+| Agent dashboard | Streamlit Community Cloud, main file `dashboard/app.py` | Secrets: `SUPPORTIQ_API = "https://supportiq-api.onrender.com"`, `DASHBOARD_PASSWORD = "..."` |
+| Customer portal | Streamlit Community Cloud, main file `portal/app.py` | Secrets: `SUPPORTIQ_API = "https://supportiq-api.onrender.com"` |
 
-The GitHub Action in `.github/workflows/sync-to-huggingface.yml` mirrors `main` to the Space on
-every push once the `HF_TOKEN` and `HF_SPACE` repository secrets exist. `ci.yml` runs the tests.
+Why it fits free tiers: the API has no PyTorch and no vector database. Embeddings come from
+Gemini's embedding API and are stored as rows in PostgreSQL, searched with NumPy. The process
+uses a few hundred MB. The knowledge base is embedded once at first start and the ticket
+index is backfilled automatically, so nothing needs a persistent disk.
 
-Behaviour on free tiers: the API sleeps when idle and takes up to a minute to wake; both Streamlit
-apps show a "connecting" note and retry. The vector index is rebuilt at startup, so it needs no
-persistent disk. Tickets live in PostgreSQL and survive redeploys.
+Behaviour on free tiers: Render sleeps the API after 15 idle minutes and takes 30 to 60 seconds
+to wake; both Streamlit apps show a "connecting" note and retry. `ci.yml` runs the tests on push.
 
 ## Tests
 
@@ -193,7 +182,9 @@ app/
     priority.py        explainable rules -> low/medium/high + reasons
     routing.py         category -> team
     llm.py             Gemini: analyse (summary+sentiment), draft_response
-    rag.py             Chroma index over knowledge base, retrieval, groundedness
+    embeddings.py      Gemini embedding API (or local Sentence Transformers)
+    vectors.py         tiny vector store in the main DB, NumPy cosine search
+    rag.py             knowledge-base indexing, retrieval, similar tickets, groundedness
     pipeline.py        runs everything for one ticket
 ml/
   generate_synthetic.py  Gemini-generated labelled tickets

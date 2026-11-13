@@ -34,14 +34,16 @@ def _utcnow() -> datetime:
 
 
 # ----------------------------------------------------------------------------- helpers
-def _apply_ai(ticket: Ticket, ai: dict) -> None:
+def _apply_ai(ticket: Ticket, ai: dict, db: Session) -> None:
     """Write pipeline output onto a ticket, set working values, SLA clocks and the similarity index."""
+    ai = dict(ai)
+    vector = ai.pop("ticket_vector", None)
     for k, v in ai.items():
         setattr(ticket, k, v)
     ticket.category, ticket.priority, ticket.team = ai["ai_category"], ai["ai_priority"], ai["ai_team"]
     ticket.set_deadlines()
     try:
-        rag.index_ticket(ticket.id, f"{ticket.subject}\n{ticket.body}")
+        rag.index_ticket(ticket.id, f"{ticket.subject}\n{ticket.body}", db, vector=vector)
     except Exception as exc:  # similarity is a nice-to-have, never a blocker
         log.warning("Could not index ticket %s for similarity: %s", ticket.id, exc)
 
@@ -73,7 +75,7 @@ def _triage_in_background(ticket_ids: list[int]) -> None:
             except Exception as exc:
                 log.exception("Background triage failed for ticket %s: %s", tid, exc)
                 continue
-            _apply_ai(ticket, ai)
+            _apply_ai(ticket, ai, db)
             db.commit()
             log.info("Triaged %s in background (%s, %s)", ticket.ticket_ref, ai["ai_category"], ai["ai_priority"])
 
@@ -82,7 +84,7 @@ def _triage_in_background(ticket_ids: list[int]) -> None:
 @router.post("", response_model=TicketOut, status_code=201)
 def create_ticket(payload: TicketCreate, db: Session = Depends(get_db)):
     ticket = _new_ticket(db, payload.subject, payload.body, payload.channel, payload.customer_email)
-    _apply_ai(ticket, pipeline.run(payload.subject, payload.body))
+    _apply_ai(ticket, pipeline.run(payload.subject, payload.body), db)
     db.commit()
     db.refresh(ticket)
     return ticket

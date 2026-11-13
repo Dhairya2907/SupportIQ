@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -67,6 +67,23 @@ class Ticket(Base):
     def set_deadlines(self) -> None:
         if self.priority:
             self.response_due_at, self.resolve_due_at = sla.deadlines(self.created_at or utcnow(), self.priority)
+
+
+class Embedding(Base):
+    """Vector store rows (see services/vectors.py): policy chunks and ticket embeddings."""
+
+    __tablename__ = "embeddings"
+    __table_args__ = (UniqueConstraint("kind", "ref", "model", name="uq_embedding_kind_ref_model"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20), index=True)  # kb | ticket
+    ref: Mapped[str] = mapped_column(String(64), index=True)  # chunk id or ticket id
+    source: Mapped[str | None] = mapped_column(String(100))  # kb: policy document name
+    title: Mapped[str | None] = mapped_column(String(200))
+    text: Mapped[str] = mapped_column(Text)
+    model: Mapped[str] = mapped_column(String(100))
+    vector: Mapped[str] = mapped_column(Text)  # JSON list of floats
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Feedback(Base):

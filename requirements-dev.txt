@@ -1,0 +1,17 @@
+# Everything for local development: API + ML scripts + both Streamlit apps + tests.
+-r requirements.txt
+
+# ML scripts (ml/)
+pandas>=2.2
+matplotlib>=3.9
+
+# Streamlit apps (dashboard/, portal/)
+streamlit>=1.36
+requests>=2.32
+
+# Tests
+pytest>=8.2
+httpx>=0.27
+
+# Optional: offline embeddings with EMBEDDING_PROVIDER=local (adds PyTorch, ~1.5 GB RAM)
+# sentence-transformers>=3.0

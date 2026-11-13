@@ -1,0 +1,23 @@
+# Render Blueprint: deploys the API as a free web service.
+# Render dashboard -> New -> Blueprint -> pick this repo. Fill in the two secret env vars when asked.
+services:
+  - type: web
+    name: supportiq-api
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: GEMINI_API_KEY
+        sync: false          # set in the Render dashboard, never in the repo
+      - key: DATABASE_URL
+        sync: false          # Neon connection string
+      - key: ENABLE_RAG
+        value: "true"
+      - key: EMBEDDING_PROVIDER
+        value: gemini

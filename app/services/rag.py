@@ -1,44 +1,33 @@
-"""Vector search with Chroma + Sentence Transformers. Two collections, same embedder:
+"""Retrieval over the policy knowledge base and similar-ticket search.
 
-  kb__<model>       policy documents from data/knowledge_base/*.md, split on H2 headings
-  tickets__<model>  one entry per ticket, for similar-ticket detection
+Embeddings come from services/embeddings.py (Gemini by default) and are stored in the main
+database by services/vectors.py. Two kinds of rows share the same embedding space:
 
-Collection names carry the embedding model, so switching models (e.g. to the multilingual
-one for Hindi) never mixes vector spaces. Rebuild the KB with `python -m app.services.rag`.
+  kb      policy chunks from data/knowledge_base/*.md, split on H2 headings
+  ticket  one row per ticket, for similar-ticket detection
+
+Rebuild the knowledge base with `python -m app.services.rag`.
 """
 from __future__ import annotations
 
 import logging
 import re
-from functools import lru_cache
 from pathlib import Path
 
+from sqlalchemy.orm import Session
+
 from app.config import settings
+from app.services import embeddings, vectors
 
 log = logging.getLogger(__name__)
-_MODEL_SLUG = re.sub(r"[^a-z0-9]+", "-", settings.embedding_model.lower()).strip("-")
-KB_COLLECTION = f"kb__{_MODEL_SLUG}"
-TICKET_COLLECTION = f"tickets__{_MODEL_SLUG}"
 
-
-# ------------------------------------------------------------------ infrastructure
-@lru_cache(maxsize=1)
-def _client():
-    import chromadb
-
-    return chromadb.PersistentClient(path=str(settings.chroma_dir))
-
-
-@lru_cache(maxsize=1)
-def _embedder():
-    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-
-    return SentenceTransformerEmbeddingFunction(model_name=settings.embedding_model)
-
-
-@lru_cache(maxsize=4)
-def _collection(name: str):
-    return _client().get_or_create_collection(name, embedding_function=_embedder(), metadata={"hnsw:space": "cosine"})
+PRIMARY_DOC_BY_CATEGORY = {
+    "billing": "billing_payments",
+    "delivery": "shipping_policy",
+    "technical": "technical_support",
+    "returns": "returns_refunds",
+    "account": "account_access",
+}
 
 
 # ------------------------------------------------------------------ knowledge base
@@ -56,105 +45,105 @@ def _chunk_markdown(path: Path) -> list[dict]:
             if not lines:
                 continue
         title = part.splitlines()[0].lstrip("# ").strip()
-        chunks.append({"id": f"{source}-{i}", "source": source, "title": title, "text": part})
+        chunks.append({"ref": f"{source}-{i}", "source": source, "title": title, "text": part})
     return chunks
 
 
-def build_index() -> int:
-    col = _collection(KB_COLLECTION)
+def build_index(db: Session | None = None) -> int:
+    """(Re)embed every policy chunk. Returns the number of chunks indexed."""
+    if not settings.enable_rag or not embeddings.available():
+        log.warning("RAG disabled or embeddings unavailable; knowledge base not indexed")
+        return 0
     chunks = [c for p in sorted(settings.knowledge_base_dir.glob("*.md")) for c in _chunk_markdown(p)]
     if not chunks:
         log.warning("No knowledge base documents in %s", settings.knowledge_base_dir)
         return 0
-    col.upsert(
-        ids=[c["id"] for c in chunks],
-        documents=[c["text"] for c in chunks],
-        metadatas=[{"source": c["source"], "title": c["title"]} for c in chunks],
-    )
-    log.info("Indexed %d KB chunks from %d documents into %s", len(chunks), len({c["source"] for c in chunks}), KB_COLLECTION)
+    vecs = embeddings.embed_documents([c["text"] for c in chunks])
+    items = [{**c, "vector": v} for c, v in zip(chunks, vecs)]
+    if db is not None:
+        vectors.upsert(db, "kb", items)
+    else:
+        from app.db import SessionLocal
+
+        with SessionLocal() as s:
+            vectors.upsert(s, "kb", items)
+            s.commit()
+    log.info("Indexed %d KB chunks from %d documents with %s", len(chunks), len({c["source"] for c in chunks}), settings.embedding_model)
     return len(chunks)
 
 
-PRIMARY_DOC_BY_CATEGORY = {
-    "billing": "billing_payments",
-    "delivery": "shipping_policy",
-    "technical": "technical_support",
-    "returns": "returns_refunds",
-    "account": "account_access",
-}
+def ensure_index() -> None:
+    """Build the knowledge base index once if the table is empty (called at startup)."""
+    if settings.enable_rag and vectors.count("kb") == 0:
+        try:
+            build_index()
+        except Exception as exc:
+            log.warning("Knowledge base indexing failed: %s", exc)
 
 
-def _hits(res) -> list[dict]:
-    return [
-        {"text": doc, "source": meta["source"], "title": meta["title"], "score": round(1 - dist, 3)}
-        for doc, meta, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0])
-    ]
+def embed_for_ticket(text: str) -> list[float] | None:
+    """One embedding per ticket, reused for retrieval and similarity. None when unavailable."""
+    if not settings.enable_rag or not embeddings.available():
+        return None
+    return embeddings.embed_query(text)
 
 
-def retrieve(query: str, k: int = 3, category: str | None = None) -> list[dict]:
+def retrieve(query: str | None = None, k: int = 3, category: str | None = None, query_vector: list[float] | None = None) -> list[dict]:
     """Top-k policy chunks. If a category is known, at least two chunks come from that
-    category's primary policy document; this keeps retrieval on topic for short or
+    category's primary policy document, which keeps retrieval on topic for short or
     non-English tickets where pure similarity drifts."""
     if not settings.enable_rag:
         return []
-    col = _collection(KB_COLLECTION)
-    if col.count() == 0:
-        build_index()
-    if col.count() == 0:
+    vec = query_vector if query_vector is not None else (embed_for_ticket(query) if query else None)
+    if vec is None or vectors.count("kb") == 0:
         return []
     hits: list[dict] = []
     primary = PRIMARY_DOC_BY_CATEGORY.get(category or "")
     if primary:
-        hits += _hits(col.query(query_texts=[query], n_results=min(2, col.count()), where={"source": primary}))
-    general = _hits(col.query(query_texts=[query], n_results=min(k + 2, col.count())))
-    seen = {(h["source"], h["title"]) for h in hits}
-    for h in general:
-        if (h["source"], h["title"]) not in seen:
+        hits += vectors.query("kb", vec, k=2, source=primary)
+    seen = {h["ref"] for h in hits}
+    for h in vectors.query("kb", vec, k=k + 2):
+        if h["ref"] not in seen:
             hits.append(h)
-            seen.add((h["source"], h["title"]))
+            seen.add(h["ref"])
         if len(hits) >= k:
             break
     return hits[:k]
 
 
 # ------------------------------------------------------------------ similar tickets
-def index_tickets(items: list[tuple[int, str]]) -> None:
-    """items = [(ticket_id, text), ...]. Safe to call repeatedly (upsert)."""
-    if not settings.enable_rag or not items:
+def index_tickets(items: list[tuple[int, str]], db: Session, vecs: list[list[float]] | None = None) -> None:
+    """items = [(ticket_id, text), ...]. Embeds in batches unless vectors are supplied."""
+    if not settings.enable_rag or not items or not embeddings.available():
         return
-    col = _collection(TICKET_COLLECTION)
-    col.upsert(
-        ids=[str(tid) for tid, _ in items],
-        documents=[text[:2000] for _, text in items],
-        metadatas=[{"ticket_id": tid} for tid, _ in items],
-    )
+    if vecs is None:
+        vecs = embeddings.embed_queries([t for _, t in items])
+    vectors.upsert(db, "ticket", [{"ref": str(tid), "text": text, "vector": v} for (tid, text), v in zip(items, vecs)])
 
 
-def index_ticket(ticket_id: int, text: str) -> None:
-    index_tickets([(ticket_id, text)])
+def index_ticket(ticket_id: int, text: str, db: Session, vector: list[float] | None = None) -> None:
+    index_tickets([(ticket_id, text)], db, [vector] if vector is not None else None)
 
 
-def indexed_ticket_ids() -> set[int]:
+def indexed_ticket_ids(db: Session | None = None) -> set[int]:
     if not settings.enable_rag:
         return set()
-    return {int(i) for i in _collection(TICKET_COLLECTION).get(include=[])["ids"]}
+    return {int(r) for r in vectors.refs("ticket", db)}
 
 
-def similar_tickets(text: str, k: int = 5, exclude_id: int | None = None) -> list[dict]:
+def remove_tickets(ticket_ids: list[int], db: Session) -> None:
+    vectors.remove(db, "ticket", [str(i) for i in ticket_ids])
+
+
+def similar_tickets(text: str | None = None, k: int = 5, exclude_id: int | None = None, vector: list[float] | None = None) -> list[dict]:
     """[{"ticket_id": int, "score": float}] most similar first; never includes exclude_id."""
     if not settings.enable_rag:
         return []
-    col = _collection(TICKET_COLLECTION)
-    n = col.count()
-    if n == 0:
+    vec = vector if vector is not None else (embed_for_ticket(text) if text else None)
+    if vec is None:
         return []
-    res = col.query(query_texts=[text], n_results=min(k + 1, n))
-    hits = [
-        {"ticket_id": int(meta["ticket_id"]), "score": round(1 - dist, 3)}
-        for meta, dist in zip(res["metadatas"][0], res["distances"][0])
-        if exclude_id is None or int(meta["ticket_id"]) != exclude_id
-    ]
-    return hits[:k]
+    hits = vectors.query("ticket", vec, k=k, exclude_ref=str(exclude_id) if exclude_id is not None else None)
+    return [{"ticket_id": int(h["ref"]), "score": h["score"]} for h in hits]
 
 
 # ------------------------------------------------------------------ groundedness
@@ -182,8 +171,11 @@ def groundedness(response: str, chunks: list[dict]) -> float:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    from app.db import init_db
+
+    init_db()
     n = build_index()
-    print(f"Indexed {n} chunks into {KB_COLLECTION} using {settings.embedding_model}.")
+    print(f"Indexed {n} chunks with {settings.embedding_model} ({settings.embedding_provider}).")
     for q in ["my order is late and I have no tracking update", "मेरा ऑर्डर अभी तक नहीं आया, ट्रैकिंग अपडेट नहीं हो रही"]:
         print(f"\nQuery: {q}")
         for hit in retrieve(q):

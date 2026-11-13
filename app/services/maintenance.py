@@ -33,9 +33,10 @@ def backfill() -> None:
         n_idx = 0
         if settings.enable_rag:
             try:
-                have = rag.indexed_ticket_ids()
+                have = rag.indexed_ticket_ids(db)
                 missing = [(t.id, f"{t.subject}\n{t.body}") for t in tickets if t.id not in have]
-                rag.index_tickets(missing)
+                rag.index_tickets(missing, db)
+                db.commit()
                 n_idx = len(missing)
             except Exception as exc:
                 log.warning("Similarity backfill failed: %s", exc)

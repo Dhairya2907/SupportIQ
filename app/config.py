@@ -20,8 +20,13 @@ class Settings(BaseSettings):
 
     classifier_path: Path = BASE_DIR / "ml" / "artifacts" / "classifier.joblib"
     knowledge_base_dir: Path = BASE_DIR / "data" / "knowledge_base"
-    chroma_dir: Path = BASE_DIR / "data" / "chroma"
-    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"  # English + Hindi; 384-dim like the English-only MiniLM
+
+    # Embeddings: "gemini" (API, multilingual, no heavy dependencies; the deployment default)
+    # or "local" (Sentence Transformers; needs `pip install sentence-transformers`, ~1.5 GB RAM).
+    embedding_provider: str = "gemini"
+    embedding_model: str = "gemini-embedding-001"
+    embedding_dim: int = 768
+    local_embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
 
     model_config = SettingsConfigDict(env_file=str(BASE_DIR / ".env"), extra="ignore")
 

@@ -26,11 +26,14 @@ def run(subject: str, body: str) -> dict:
     category, confidence = classifier.predict(text)
     team = routing.route(category)
 
+    # One embedding per ticket: used for policy retrieval now and stored for similar-ticket search.
+    vector: list[float] | None = None
     chunks: list[dict] = []
     try:
-        chunks = rag.retrieve(text, k=3, category=category)
-    except Exception as exc:  # vector store is optional; never block ticket creation
-        log.warning("RAG retrieval failed: %s", exc)
+        vector = rag.embed_for_ticket(text)
+        chunks = rag.retrieve(k=3, category=category, query_vector=vector) if vector is not None else []
+    except Exception as exc:  # retrieval is optional; never block ticket creation
+        log.warning("Embedding/retrieval failed: %s", exc)
 
     try:
         tri = llm.triage(subject, body, category, chunks)
@@ -65,15 +68,13 @@ def run(subject: str, body: str) -> dict:
         ),
         "ai_sources": ",".join(sorted({c["source"] for c in chunks})) or None,
         "ai_latency_ms": int((time.perf_counter() - t0) * 1000),
+        "ticket_vector": vector,  # not a column; the router stores it in the vector table
     }
 
 
 def warm_up() -> None:
-    """Load the classifier and the embedding model once so the first ticket is not slow."""
+    """Load the classifier and make sure the knowledge base is indexed."""
     t0 = time.perf_counter()
     classifier.predict("warm up")
-    try:
-        rag.retrieve("warm up", k=1)
-    except Exception as exc:
-        log.warning("RAG warm-up failed: %s", exc)
+    rag.ensure_index()
     log.info("Pipeline warm-up done in %.1fs", time.perf_counter() - t0)

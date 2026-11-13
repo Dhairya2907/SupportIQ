@@ -14,8 +14,5 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      # Tests run with RAG disabled and no Gemini key, so the heavy ML stack is not needed.
-      - run: |
-          pip install fastapi uvicorn sqlalchemy pydantic pydantic-settings python-multipart \
-                      scikit-learn pandas joblib httpx pytest "psycopg[binary]"
+      - run: pip install -r requirements.txt pytest httpx
       - run: pytest -q

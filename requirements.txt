@@ -1,29 +1,14 @@
-# API
+# API runtime. Deliberately light (no PyTorch, no vector database) so it runs on 512 MB hosts.
 fastapi>=0.115
 uvicorn[standard]>=0.30
 sqlalchemy>=2.0
 pydantic>=2.7
 pydantic-settings>=2.3
 python-multipart>=0.0.9
-psycopg[binary]>=3.2   # PostgreSQL driver (Neon/Supabase in production; SQLite locally)
+psycopg[binary]>=3.2        # PostgreSQL (Neon/Supabase in production; SQLite locally needs nothing)
 
-# LLM (Gemini)
-google-genai>=1.0
+google-genai>=1.0           # Gemini: triage + embeddings
 
-# Classical ML
-scikit-learn>=1.5
-pandas>=2.2
+scikit-learn>=1.5           # loads the trained classifier; CountVectorizer in analytics
 joblib>=1.4
-matplotlib>=3.9
-
-# RAG
-chromadb>=0.5
-sentence-transformers>=3.0
-
-# Dashboard
-streamlit>=1.36
-requests>=2.32
-
-# Dev
-pytest>=8.2
-httpx>=0.27
+numpy>=1.26                 # cosine search in services/vectors.py
