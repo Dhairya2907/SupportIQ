@@ -146,15 +146,19 @@ Three free services, one repository. Total cost: zero.
 
 | Piece | Host | How |
 |---|---|---|
-| API | Render, free web service | New -> Blueprint -> this repo (`render.yaml`). Set `GEMINI_API_KEY` and `DATABASE_URL` when prompted. |
+| API | Render, free web service | New -> Blueprint -> this repo (`render.yaml`). Set `GEMINI_API_KEY` and `DATABASE_URL` when prompted; Render generates `API_KEY`. |
 | PostgreSQL | Neon | Create a project, copy the connection string into `DATABASE_URL`. `postgres://` URLs are normalised. |
-| Agent dashboard | Streamlit Community Cloud, main file `dashboard/app.py` | Secrets: `SUPPORTIQ_API = "https://supportiq-api.onrender.com"`, `DASHBOARD_PASSWORD = "..."` |
-| Customer portal | Streamlit Community Cloud, main file `portal/app.py` | Secrets: `SUPPORTIQ_API = "https://supportiq-api.onrender.com"` |
+| Agent dashboard | Streamlit Community Cloud, main file `dashboard/app.py` | Secrets: `SUPPORTIQ_API = "https://<service>.onrender.com"`, `SUPPORTIQ_API_KEY = "<API_KEY from Render>"`, `DASHBOARD_PASSWORD = "..."` |
+| Customer portal | Streamlit Community Cloud, main file `portal/app.py` | Secrets: `SUPPORTIQ_API = "https://<service>.onrender.com"` |
 
 Why it fits free tiers: the API has no PyTorch and no vector database. Embeddings come from
 Gemini's embedding API and are stored as rows in PostgreSQL, searched with NumPy. The process
 uses a few hundred MB. The knowledge base is embedded once at first start and the ticket
 index is backfilled automatically, so nothing needs a persistent disk.
+
+Security: when `API_KEY` is set on the server, every internal `/tickets/*` request must carry
+`X-API-Key`; the dashboard sends it from its `SUPPORTIQ_API_KEY` secret. The customer endpoints
+under `/public/*` never need it, and the dashboard itself sits behind `DASHBOARD_PASSWORD`.
 
 Behaviour on free tiers: Render sleeps the API after 15 idle minutes and takes 30 to 60 seconds
 to wake; both Streamlit apps show a "connecting" note and retry. `ci.yml` runs the tests on push.

@@ -11,7 +11,16 @@ import pandas as pd
 import requests
 import streamlit as st
 
-API = os.getenv("SUPPORTIQ_API", "http://127.0.0.1:8000")
+def _api_base() -> str:
+    try:
+        if "SUPPORTIQ_API" in st.secrets:
+            return str(st.secrets["SUPPORTIQ_API"]).rstrip("/")
+    except Exception:
+        pass
+    return os.getenv("SUPPORTIQ_API", "http://127.0.0.1:8000").rstrip("/")
+
+
+API = _api_base()
 CATEGORIES = ["billing", "delivery", "technical", "returns", "account"]
 PRIORITIES = ["low", "medium", "high"]
 STATUSES = ["open", "pending", "resolved"]
@@ -80,14 +89,25 @@ SAMPLES = {
 }
 
 
-def _password() -> str | None:
-    """Dashboard password from Streamlit secrets or env. None = no login (local development)."""
+def _secret(name: str) -> str | None:
+    """Read from Streamlit secrets first, then the environment. None if unset."""
     try:
-        if "DASHBOARD_PASSWORD" in st.secrets:
-            return str(st.secrets["DASHBOARD_PASSWORD"])
+        if name in st.secrets:
+            return str(st.secrets[name])
     except Exception:
         pass
-    return os.getenv("DASHBOARD_PASSWORD") or None
+    return os.getenv(name) or None
+
+
+def _password() -> str | None:
+    """Dashboard password. None = no login (local development)."""
+    return _secret("DASHBOARD_PASSWORD")
+
+
+def _headers() -> dict:
+    """The internal API requires X-API-Key when the server has API_KEY set."""
+    key = _secret("SUPPORTIQ_API_KEY")
+    return {"X-API-Key": key} if key else {}
 
 
 def require_login() -> None:
@@ -115,7 +135,10 @@ def api(method: str, path: str, retries: int = 3, **kwargs):
     last: Exception | None = None
     for attempt in range(retries):
         try:
-            r = requests.request(method, f"{API}{path}", timeout=180, **kwargs)
+            r = requests.request(method, f"{API}{path}", timeout=180, headers=_headers(), **kwargs)
+            if r.status_code == 401:
+                st.error("The API rejected the dashboard's key. Set SUPPORTIQ_API_KEY in the dashboard secrets to match API_KEY on the server.")
+                return None
             r.raise_for_status()
             return r.json()
         except requests.ConnectionError as exc:

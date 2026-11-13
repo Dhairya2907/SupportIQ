@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     gemini_fallback_model: str = "gemini-3.5-flash"  # used on 503 overload / 429 rate limit
     database_url: str = f"sqlite:///{BASE_DIR / 'supportiq.db'}"
     enable_rag: bool = True
+    # Shared secret for the internal /tickets/* API (agent dashboard). Empty = no auth (local dev).
+    # The customer-facing /public/* endpoints never require it.
+    api_key: str = ""
 
     classifier_path: Path = BASE_DIR / "ml" / "artifacts" / "classifier.joblib"
     knowledge_base_dir: Path = BASE_DIR / "data" / "knowledge_base"

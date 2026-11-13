@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Qu
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.auth import require_api_key
 from app.config import CATEGORIES, PRIORITIES, STATUSES
 from app.db import SessionLocal, get_db
 from app.models import Feedback, Ticket
@@ -26,7 +27,7 @@ from app.services import pipeline, rag
 from app.services.sla import aware
 
 log = logging.getLogger(__name__)
-router = APIRouter(prefix="/tickets", tags=["tickets"])
+router = APIRouter(prefix="/tickets", tags=["tickets"], dependencies=[Depends(require_api_key)])
 
 
 def _utcnow() -> datetime:

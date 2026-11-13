@@ -12,7 +12,16 @@ import pandas as pd
 import requests
 import streamlit as st
 
-API = os.getenv("SUPPORTIQ_API", "http://127.0.0.1:8000")
+def _api_base() -> str:
+    try:
+        if "SUPPORTIQ_API" in st.secrets:
+            return str(st.secrets["SUPPORTIQ_API"]).rstrip("/")
+    except Exception:
+        pass
+    return os.getenv("SUPPORTIQ_API", "http://127.0.0.1:8000").rstrip("/")
+
+
+API = _api_base()
 STORE = "Lumen Store"
 
 st.set_page_config(page_title=f"{STORE} Help Center", page_icon="💬", layout="centered")
