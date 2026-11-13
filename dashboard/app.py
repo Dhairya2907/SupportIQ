@@ -5,6 +5,7 @@ Run:  streamlit run dashboard/app.py          (set SUPPORTIQ_API if the API is n
 from __future__ import annotations
 
 import os
+import time
 
 import pandas as pd
 import requests
@@ -79,14 +80,54 @@ SAMPLES = {
 }
 
 
-def api(method: str, path: str, **kwargs):
+def _password() -> str | None:
+    """Dashboard password from Streamlit secrets or env. None = no login (local development)."""
     try:
-        r = requests.request(method, f"{API}{path}", timeout=180, **kwargs)
-        r.raise_for_status()
-        return r.json()
-    except requests.RequestException as exc:
-        st.error(f"API error: {exc}")
-        return None
+        if "DASHBOARD_PASSWORD" in st.secrets:
+            return str(st.secrets["DASHBOARD_PASSWORD"])
+    except Exception:
+        pass
+    return os.getenv("DASHBOARD_PASSWORD") or None
+
+
+def require_login() -> None:
+    """The dashboard is an internal tool. When deployed, gate it behind a shared password."""
+    pw = _password()
+    if not pw or st.session_state.get("authed"):
+        return
+    st.markdown("<div style='height:12vh'></div>", unsafe_allow_html=True)
+    _, mid, _ = st.columns([1, 1.2, 1])
+    with mid:
+        st.markdown("<div class='sidebar-brand'>🎫 SupportIQ</div><div class='sidebar-sub'>Agent dashboard · staff only</div>", unsafe_allow_html=True)
+        with st.form("login"):
+            entered = st.text_input("Password", type="password")
+            if st.form_submit_button("Sign in", type="primary", use_container_width=True):
+                if entered == pw:
+                    st.session_state["authed"] = True
+                    st.rerun()
+                st.error("Incorrect password.")
+        st.caption("Customers should use the Help Center portal instead.")
+    st.stop()
+
+
+def api(method: str, path: str, retries: int = 3, **kwargs):
+    """Call the backend. Retries on connection errors so a sleeping free-tier host can wake up."""
+    last: Exception | None = None
+    for attempt in range(retries):
+        try:
+            r = requests.request(method, f"{API}{path}", timeout=180, **kwargs)
+            r.raise_for_status()
+            return r.json()
+        except requests.ConnectionError as exc:
+            last = exc
+            if attempt == 0:
+                st.info("Waking up the API server. This can take up to a minute on free hosting.")
+            time.sleep(8 * (attempt + 1))
+        except requests.RequestException as exc:
+            st.error(f"API error: {exc}")
+            return None
+    st.error(f"Could not reach the API at {API}. ({last})")
+    return None
 
 
 def badge(value: str | None) -> str:
@@ -403,6 +444,8 @@ PAGES = {
     "🔎  Ticket detail": page_detail,
     "📊  Analytics": page_analytics,
 }
+require_login()
+
 with st.sidebar:
     st.markdown("<div class='sidebar-brand'>🎫 SupportIQ</div><div class='sidebar-sub'>AI-assisted ticket triage</div>", unsafe_allow_html=True)
     choice = st.radio("Navigate", list(PAGES), label_visibility="collapsed")

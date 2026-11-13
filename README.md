@@ -1,3 +1,13 @@
+---
+title: SupportIQ API
+emoji: 🎫
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # SupportIQ: AI Customer Support Ticket Triage
 
 Hybrid AI system that triages incoming customer support tickets. A small trained model handles
@@ -141,6 +151,24 @@ back to the truncated message and the draft reply is left empty for the agent.
 CSV uploads insert all rows immediately and return at once. Triage then runs in the background,
 one ticket at a time, and tickets fill in as they finish. `GET /tickets/metrics` reports
 `ai_pending`, and the dashboard shows it on the Metrics page and marks untriaged rows as pending.
+
+## Deployment
+
+Three free services, one repository:
+
+| Piece | Host | Config |
+|---|---|---|
+| API (`Dockerfile`) | Hugging Face Space, Docker SDK | Secrets: `GEMINI_API_KEY`, `DATABASE_URL`. Port 7860. The YAML block at the top of this README is the Space config. |
+| PostgreSQL | Neon (or Supabase) | Copy the connection string into `DATABASE_URL`. `postgres://` URLs are normalised automatically. |
+| Agent dashboard | Streamlit Community Cloud, main file `dashboard/app.py` | Secrets: `SUPPORTIQ_API = "https://<space>.hf.space"`, `DASHBOARD_PASSWORD = "..."` |
+| Customer portal | Streamlit Community Cloud, main file `portal/app.py` | Secrets: `SUPPORTIQ_API = "https://<space>.hf.space"` |
+
+The GitHub Action in `.github/workflows/sync-to-huggingface.yml` mirrors `main` to the Space on
+every push once the `HF_TOKEN` and `HF_SPACE` repository secrets exist. `ci.yml` runs the tests.
+
+Behaviour on free tiers: the API sleeps when idle and takes up to a minute to wake; both Streamlit
+apps show a "connecting" note and retry. The vector index is rebuilt at startup, so it needs no
+persistent disk. Tickets live in PostgreSQL and survive redeploys.
 
 ## Tests
 

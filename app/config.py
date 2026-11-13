@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,6 +24,21 @@ class Settings(BaseSettings):
     embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"  # English + Hindi; 384-dim like the English-only MiniLM
 
     model_config = SettingsConfigDict(env_file=str(BASE_DIR / ".env"), extra="ignore")
+
+    @field_validator("database_url")
+    @classmethod
+    def _normalise_database_url(cls, url: str) -> str:
+        """Hosted Postgres providers hand out `postgres://` or `postgresql://` URLs.
+        SQLAlchemy needs the driver spelled out, and we ship psycopg (v3)."""
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        if url.startswith("postgresql://"):
+            url = "postgresql+psycopg://" + url[len("postgresql://"):]
+        return url
+
+    @property
+    def is_sqlite(self) -> bool:
+        return self.database_url.startswith("sqlite")
 
 
 settings = Settings()

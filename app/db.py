@@ -7,8 +7,11 @@ from app.config import settings
 
 log = logging.getLogger(__name__)
 
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-engine = create_engine(settings.database_url, connect_args=connect_args)
+if settings.is_sqlite:
+    engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
+else:
+    # Hosted Postgres (Neon/Supabase) closes idle connections; pre-ping avoids stale-connection errors.
+    engine = create_engine(settings.database_url, pool_pre_ping=True, pool_size=5, max_overflow=5, pool_recycle=300)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

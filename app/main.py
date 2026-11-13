@@ -44,3 +44,24 @@ app.include_router(public.router)  # external: customer portal
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    """Landing page for the hosted API (what you see when you open the Space URL)."""
+    from fastapi.responses import HTMLResponse
+
+    return HTMLResponse(
+        """
+        <html><head><title>SupportIQ API</title>
+        <style>body{font-family:system-ui,sans-serif;max-width:640px;margin:48px auto;color:#1F2937;line-height:1.5}
+        a{color:#4F6BED}code{background:#F3F4F6;padding:2px 6px;border-radius:4px}</style></head>
+        <body><h1>SupportIQ API</h1>
+        <p>AI-assisted customer support ticket triage. This is the backend; the user-facing apps are the
+        agent dashboard and the customer Help Center.</p>
+        <ul><li><a href="/docs">Interactive API docs</a></li><li><a href="/health">Health check</a></li>
+        <li><a href="https://github.com/Dhairya2907/SupportIQ">Source on GitHub</a></li></ul>
+        <p><small>Free-tier hosting: the first request after idle can take up to a minute while the model loads.</small></p>
+        </body></html>
+        """
+    )

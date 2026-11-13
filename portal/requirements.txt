@@ -1,0 +1,4 @@
+# Customer portal only (Streamlit Community Cloud installs this, not the root file).
+streamlit>=1.36
+requests>=2.32
+pandas>=2.2

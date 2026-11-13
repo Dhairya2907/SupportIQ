@@ -1,0 +1,21 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # Tests run with RAG disabled and no Gemini key, so the heavy ML stack is not needed.
+      - run: |
+          pip install fastapi uvicorn sqlalchemy pydantic pydantic-settings python-multipart \
+                      scikit-learn pandas joblib httpx pytest "psycopg[binary]"
+      - run: pytest -q

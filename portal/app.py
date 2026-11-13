@@ -6,6 +6,7 @@ Talks only to the /public endpoints. Never shows AI internals, priority or agent
 from __future__ import annotations
 
 import os
+import time
 
 import pandas as pd
 import requests
@@ -36,16 +37,24 @@ st.markdown(
 )
 
 
-def api(method: str, path: str, **kwargs):
-    try:
-        r = requests.request(method, f"{API}{path}", timeout=60, **kwargs)
-        if r.status_code == 404:
+def api(method: str, path: str, retries: int = 3, **kwargs):
+    """Call the backend. Retries on connection errors so a sleeping free-tier host can wake up."""
+    for attempt in range(retries):
+        try:
+            r = requests.request(method, f"{API}{path}", timeout=90, **kwargs)
+            if r.status_code == 404:
+                return None
+            r.raise_for_status()
+            return r.json()
+        except requests.ConnectionError:
+            if attempt == 0:
+                st.info("Connecting to the help center. This can take up to a minute the first time.")
+            time.sleep(8 * (attempt + 1))
+        except requests.RequestException as exc:
+            st.error(f"Sorry, the help center is temporarily unavailable. ({exc})")
             return None
-        r.raise_for_status()
-        return r.json()
-    except requests.RequestException as exc:
-        st.error(f"Sorry, the help center is temporarily unavailable. ({exc})")
-        return None
+    st.error("Sorry, the help center is not responding right now. Please try again in a minute.")
+    return None
 
 
 def fmt(ts: str | None) -> str:
@@ -90,10 +99,20 @@ def page_raise():
         if not (name and email and subject and len(body.strip()) >= 10):
             st.warning("Please fill in all fields. The description needs at least 10 characters.")
             return
-        try:
-            r = requests.post(f"{API}/public/tickets", json={"name": name, "email": email, "subject": subject, "body": body}, timeout=30)
-        except requests.RequestException as exc:
-            st.error(f"Could not submit right now. ({exc})")
+        r = None
+        for attempt in range(3):
+            try:
+                r = requests.post(f"{API}/public/tickets", json={"name": name, "email": email, "subject": subject, "body": body}, timeout=90)
+                break
+            except requests.ConnectionError:
+                if attempt == 0:
+                    st.info("Connecting to the help center. This can take up to a minute the first time.")
+                time.sleep(8 * (attempt + 1))
+            except requests.RequestException as exc:
+                st.error(f"Could not submit right now. ({exc})")
+                return
+        if r is None:
+            st.error("Sorry, the help center is not responding right now. Please try again in a minute.")
             return
         if r.status_code == 422:
             st.warning("Please check the email address and try again.")

@@ -1,0 +1,27 @@
+# Mirrors main to the Hugging Face Space that hosts the API, so a push to GitHub redeploys it.
+# Needs two repository secrets: HF_TOKEN (write token) and HF_SPACE (e.g. dhairya2907/supportiq-api).
+# Skips quietly until those secrets exist.
+name: sync to huggingface space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push to Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ secrets.HF_SPACE }}
+        run: |
+          if [ -z "$HF_TOKEN" ] || [ -z "$HF_SPACE" ]; then
+            echo "HF_TOKEN / HF_SPACE secrets not set; skipping sync."
+            exit 0
+          fi
+          git push --force "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" HEAD:main
