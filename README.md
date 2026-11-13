@@ -17,6 +17,16 @@ customer message
                                                    feedback + audit trail
 ```
 
+## Live demo
+
+| App | Link |
+|---|---|
+| Customer Help Center | https://supportiq-complaintcenter.streamlit.app |
+| Agent dashboard (password protected) | https://supportiq-agent.streamlit.app |
+| API docs | https://supportiq-api-5a9q.onrender.com/docs |
+
+Free hosting: the API sleeps when idle, so the first request can take up to a minute.
+
 ## Stack
 
 | Layer | Choice | Why |
