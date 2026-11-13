@@ -1,0 +1,79 @@
+"""The triage pipeline: one ticket in, all AI fields out.
+
+    classifier ──► category, confidence ──► routing ──► team
+    rag.retrieve ──► policy chunks
+    llm.triage (ONE Gemini call) ──► summary, sentiment, draft reply
+    priority rules (text + category + sentiment) ──► priority, reasons
+
+One LLM call per ticket keeps us inside the free-tier quota and keeps latency to one round trip.
+If Gemini is unavailable or over quota the ticket is still created with classifier, rules,
+routing and a truncated-body summary; the draft reply is left empty for the agent.
+"""
+from __future__ import annotations
+
+import logging
+import time
+
+from app.services import classifier, llm, priority, rag, routing
+
+log = logging.getLogger(__name__)
+
+
+def run(subject: str, body: str) -> dict:
+    t0 = time.perf_counter()
+    text = f"{subject}\n{body}"
+
+    category, confidence = classifier.predict(text)
+    team = routing.route(category)
+
+    chunks: list[dict] = []
+    try:
+        chunks = rag.retrieve(text, k=3, category=category)
+    except Exception as exc:  # vector store is optional; never block ticket creation
+        log.warning("RAG retrieval failed: %s", exc)
+
+    try:
+        tri = llm.triage(subject, body, category, chunks)
+    except Exception as exc:
+        log.warning("LLM triage failed, falling back to rules only: %s", exc)
+        tri = {
+            "language": llm.guess_language(body),
+            "summary": body[:160] + ("..." if len(body) > 160 else ""),
+            "sentiment": "neutral",
+            "response": None,
+        }
+
+    prio, reasons = priority.predict(text, category=category, sentiment=tri["sentiment"])
+    suggested = tri["response"]
+
+    return {
+        "ai_category": category,
+        "ai_category_confidence": confidence,
+        "ai_priority": prio,
+        "ai_priority_reasons": "; ".join(reasons),
+        "ai_sentiment": tri["sentiment"],
+        "ai_language": tri.get("language", "en"),
+        "ai_team": team,
+        "ai_summary": tri["summary"],
+        "ai_suggested_response": suggested,
+        # Lexical groundedness compares reply words with English policy text, so it is only
+        # meaningful for English replies. Hindi/Hinglish get None until an LLM judge exists.
+        "ai_groundedness": (
+            rag.groundedness(suggested or "", chunks)
+            if (chunks and suggested and tri.get("language", "en") == "en")
+            else None
+        ),
+        "ai_sources": ",".join(sorted({c["source"] for c in chunks})) or None,
+        "ai_latency_ms": int((time.perf_counter() - t0) * 1000),
+    }
+
+
+def warm_up() -> None:
+    """Load the classifier and the embedding model once so the first ticket is not slow."""
+    t0 = time.perf_counter()
+    classifier.predict("warm up")
+    try:
+        rag.retrieve("warm up", k=1)
+    except Exception as exc:
+        log.warning("RAG warm-up failed: %s", exc)
+    log.info("Pipeline warm-up done in %.1fs", time.perf_counter() - t0)

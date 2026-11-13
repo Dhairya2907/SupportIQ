@@ -1,0 +1,16 @@
+[theme]
+base = "light"
+primaryColor = "#4F6BED"            # soft indigo for buttons, links, active states
+backgroundColor = "#F7F8FB"         # page background: very light grey-blue
+secondaryBackgroundColor = "#FFFFFF" # sidebar, inputs, cards
+textColor = "#1F2937"
+font = "sans serif"
+baseRadius = "0.6rem"
+borderColor = "#E5E7EB"
+showWidgetBorder = true
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

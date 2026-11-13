@@ -1,0 +1,30 @@
+# secrets and local config
+.env
+.streamlit/secrets.toml
+
+# environments and caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# local databases and indexes (rebuilt on startup)
+*.db
+data/chroma/
+
+# raw downloads (large, and the Kaggle set is excluded from training anyway)
+data/raw/*.csv
+
+# generated reports and images (regenerate with ml/evaluate.py)
+ml/artifacts/eval_report.json
+ml/artifacts/train_metrics.json
+ml/artifacts/confusion_matrix.png
+
+# Committed on purpose, because deployment needs them and they are small:
+#   ml/artifacts/classifier.joblib   (~1 MB trained model)
+#   data/processed/synthetic*.csv    (training data, reproducible with ml/generate_synthetic.py)
+#   data/processed/train.csv, test.csv
+
+# Claude Code local settings
+.claude/
